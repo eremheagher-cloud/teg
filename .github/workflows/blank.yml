@@ -1,0 +1,153 @@
+name: PC criado pelo @alves7.pcm
+
+on:
+  workflow_dispatch:
+    inputs:
+      instance_number:
+        description: "Instance Number (1-10)"
+        required: true
+        default: "1"
+        type: string
+
+jobs:
+  deploy-rdp:
+    runs-on: windows-2022
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: System Information
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          Write-Host "=== ENIGMANO SYSTEM DIAGNOSTICS ===" -ForegroundColor Green
+          Write-Host "Instance: ${{ inputs.instance_number }}" -ForegroundColor Yellow
+
+          Get-ComputerInfo |
+            Select-Object WindowsProductName, WindowsVersion, OsBuildNumber |
+            Format-List
+
+          Get-CimInstance Win32_Processor |
+            Select-Object Name, NumberOfCores, NumberOfLogicalProcessors |
+            Format-List
+
+          $computer = Get-CimInstance Win32_ComputerSystem
+          Write-Host ("Memory: {0:N2} GB" -f (
+            $computer.TotalPhysicalMemory / 1GB
+          ))
+
+      - name: Check Windows Audio
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+
+          foreach ($name in @('Audiosrv', 'AudioEndpointBuilder')) {
+            $service = Get-Service -Name $name -ErrorAction SilentlyContinue
+
+            if ($null -ne $service) {
+              Write-Host "$name : $($service.Status)"
+            } else {
+              Write-Host "$name is unavailable."
+            }
+          }
+
+      - name: Check Microsoft Store
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+
+          $store = Get-AppxPackage -AllUsers `
+            -Name Microsoft.WindowsStore `
+            -ErrorAction SilentlyContinue
+
+          if ($store) {
+            Write-Host "Microsoft Store is installed."
+          } else {
+            Write-Host "Microsoft Store is unavailable on this runner."
+          }
+
+          foreach ($name in @('InstallService', 'ClipSVC', 'AppXSvc')) {
+            $service = Get-Service -Name $name -ErrorAction SilentlyContinue
+
+            if ($null -ne $service) {
+              Write-Host "$name : $($service.Status)"
+            }
+          }
+
+      - name: Validate Tailscale Credentials
+        shell: powershell
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if ([string]::IsNullOrWhiteSpace($env:TAILSCALE_AUTH_KEY)) {
+            throw "Configure TAILSCALE_AUTH_KEY under Settings > Secrets and variables > Actions."
+          }
+
+          Write-Host "TAILSCALE_AUTH_KEY is present."
+
+      - name: Check Architecture
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+
+          Write-Host "Architecture: $env:PROCESSOR_ARCHITECTURE"
+
+          Get-CimInstance Win32_OperatingSystem |
+            Select-Object Caption, Version, OSArchitecture |
+            Format-List
+
+      - name: Check Installed Applications
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+
+          $paths = @(
+            "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+            "$env:ProgramFiles\7-Zip\7z.exe",
+            "$env:ProgramFiles\Tailscale\tailscale.exe"
+          )
+
+          foreach ($path in $paths) {
+            if (Test-Path $path) {
+              Write-Host "Found: $path"
+            } else {
+              Write-Host "Not found: $path"
+            }
+          }
+
+          foreach ($name in @('git', 'winget', 'chrome', '7z', 'tailscale')) {
+            if (Get-Command $name -ErrorAction SilentlyContinue) {
+              Write-Host "$name is available in PATH."
+            } else {
+              Write-Host "$name is not available in PATH."
+            }
+          }
+
+      - name: Disk Space
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+
+          Get-PSDrive -PSProvider FileSystem |
+            Select-Object Name,
+              @{Name='Free Space (GB)'; Expression={
+                [math]::Round($_.Free / 1GB, 2)
+              }} |
+            Format-Table -AutoSize
+
+      - name: Final Report
+        if: always()
+        shell: powershell
+        run: |
+          Write-Host "===================================="
+          Write-Host " SYSTEM DIAGNOSTICS COMPLETED"
+          Write-Host "===================================="
+          Write-Host "Workflow: PC criado pelo @alves7.pcm"
+          Write-Host "Instance: ${{ inputs.instance_number }}"
+          Write-Host "Runner: windows-2022"
+          Write-Host "Persistent session loop: removed"
